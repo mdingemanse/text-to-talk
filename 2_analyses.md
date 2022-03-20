@@ -76,11 +76,11 @@ produced by over 11.000 participants.
 
 We generate a map with numbers for labels (used in the paper).
 
-![](2_analyses_files/figure-gfm/ACL_map-1.png)<!-- -->
+![](figures_rmd/ACL_map-1.png)<!-- -->
 
 We also produce a graph of language resources by size.
 
-![](2_analyses_files/figure-gfm/language_resources-1.png)<!-- -->
+![](figures_rmd/language_resources-1.png)<!-- -->
 
 # Turn-taking & timing
 
@@ -101,7 +101,7 @@ provide &gt;1000 turn transitions in dyadic settings. The median floor
 transfer onset time (FTO) across the sample is 10 ms, very close to the
 no-gap no-overlap goal seen in prior work.
 
-![](2_analyses_files/figure-gfm/turntaking_plot-1.png)<!-- -->
+![](figures_rmd/turntaking_plot-1.png)<!-- -->
 
 # Unity and diversity
 
@@ -117,7 +117,7 @@ that occur in a regime where contributions in the 10 second window
 surrounding them are evenly distributed (both speakers contribution
 between 40% to 60% of talk).
 
-![](2_analyses_files/figure-gfm/chats-1.png)<!-- -->
+![](figures_rmd/chats-1.png)<!-- -->
 
 We find that the most frequent turn formats used in English and Korean
 tellings are ‘mhm’ and ‘eung’ respectively. We plot 4 examples of 80
@@ -153,7 +153,7 @@ this:
 
 Putting it all together, we get at the following figure:
 
-![](2_analyses_files/figure-gfm/contfreq_fig-1.png)<!-- -->
+![](figures_rmd/contfreq_fig-1.png)<!-- -->
 
 # Interactional tools
 
@@ -169,7 +169,7 @@ families). We also look at a further set of 17 smaller corpora
 (representing 21 languages of 18 families) in which there at least 9
 recurring turn formats.
 
-![](2_analyses_files/figure-gfm/zipf2-1.png)<!-- -->
+![](figures_rmd/zipf2-1.png)<!-- -->
 
 ## Recurrent turn formats
 
@@ -341,7 +341,7 @@ the distribution of FTOs (floor transfer onset times).
     ##  9 Sambas     501
     ## 10 Spanish   2363
 
-![](2_analyses_files/figure-gfm/qa_plot-1.png)<!-- -->
+![](figures_rmd/qa_plot-1.png)<!-- -->
 
 ## Power law plots for smaller corpora
 
@@ -349,7 +349,7 @@ While the body of the paper provides a plot for 22 large corpora, here
 we als plot the rank-frequency distributions for turns and words for 21
 smaller corpora in which there are at least 9 recurrent turn formats.
 
-![](2_analyses_files/figure-gfm/zipf_sup-1.png)<!-- -->
+![](figures_rmd/zipf_sup-1.png)<!-- -->
 
 ## Table of language data
 
