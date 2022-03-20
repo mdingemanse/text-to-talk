@@ -1,0 +1,288 @@
+---
+title: "From text to talk (ACL2022): Reports"
+author: "Mark Dingemanse & Andreas Liesenfeld"
+date: "`r format(Sys.Date())`"
+output: 
+  github_document:
+    html_preview: false
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: false
+    theme: flatly
+    self_contained: true
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding,
+  output_format = "all") })
+editor_options: 
+  chunk_output_type: console
+---
+
+```{css echo=FALSE}
+h2  {
+  margin-top: 3em;
+}
+```
+
+```{r setup, include=FALSE,echo=FALSE}
+knitr::opts_chunk$set(fig.width=10,fig.height=3,
+                      echo = TRUE,warning=FALSE,message=FALSE,results="asis")
+
+# Packages and useful functions
+list.of.packages <- c("utf8","tidyverse","ggthemes","ggrepel","lubridate","stringr","stringi","stringdist","viridis","extrafont","mapproj","cowplot","knitr")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+lapply(list.of.packages, require, character.only=T)
+
+# Load functions
+source("../elpaco-lingdiv/elpaco-lingdiv-0-functions.R")
+
+# Load data
+d <- read_csv("../elpaco_acl2022/data/d-acl2022-sensitive.csv",show_col_types=F)
+d.tokens <- read_csv("data/d-acl2022-tokens.csv",lazy=T,show_col_types=F)
+languagedata <- read_csv("data/languages.csv",lazy=F,show_col_types=F) 
+
+# Prepare overviews
+```
+
+```{r totals, include=F}
+totals_by_source <- d %>% group_by(language,source) %>%
+  summarize(start=min.na(begin),
+            finish=max.na(end),
+            turns=n_distinct(uid),
+            words=sum(nwords,na.rm=T),
+            totaltime = finish - start,
+            hours = (totaltime/1000) / 3600,
+            notiming = sum(is.na(duration)),
+            useless = ifelse(notiming==turns,1,0)) %>%
+  mutate(hours = ifelse(hours > 0,hours,0))
+
+totals_by_language <- totals_by_source %>%
+  group_by(language) %>%
+  summarize(turns = sum(turns),
+            words = sum(words),
+            hours = sum(hours),
+            useless_sources = sum(useless))
+  
+totals <- totals_by_language %>%
+  ungroup() %>%
+  summarize(turns = sum(turns),
+            words = sum(words),
+            hours = round(sum(hours)))
+
+
+nfamilies <- n_distinct(languagedata$family)
+nlanguages <- n_distinct(languagedata$language)
+
+```
+
+# Introduction
+
+This document provides a full overview of conversational corpora curated and analysed in the ACL2022 paper "From text to interaction: harnessing conversational corpora for humane and diversity-aware language technology". Currently the collection includes conversational corpora for **`r n_distinct(d$language)` spoken languages** from **`r nfamilies` phyla**. Together, the corpora represent **`r totals$hours` hours** of interaction in **`r totals$turns` annotations**. 
+Not all of these corpora make an appearance in the analyses in the paper because of differences in size as well as in annotation and segmentation standards. Here we show all of the spoken language corpora we have considered, also as a way of offering full transparency about inclusion criteria.
+
+```{r map, echo=F, fig.height=6,fig.width=12}
+
+languagedata %>%
+  arrange(lon) %>%
+  mutate(label = row_number()) %>%
+  ggplot(aes(lon,lat,colour=family)) +
+  theme_map() + theme(legend.position="none") +
+  borders("world",colour=NA,fill="#cccccc") +
+  coord_cartesian(ylim=c(-55,80),xlim=c(-150,170)) +
+  geom_point() +
+  geom_label_repel(aes(label=langshort),size=3,max.overlaps = Inf)
+
+```
+
+# Language overviews
+
+For every language, this report includes a 3-panel overview plot of **A** the timing of turn-taking (for floor transfers only); **B** the duration in relation to transition timing of annotations (this provides a quick way to spot oddities in segmentation data); and **C** tokenised words ranked by frequency (with the top 10 displayed).
+
+Plot axes are not standardized to make visible possible outliers. The figure panels are followed by some samples of conversations, randomly sampled from the larger corpus. 
+
+The remainder of the information comes in tables listing key characteristics of the corpus, including:
+
+* `turns`: number of annotations with timing information in the corpus, which in most corpora corresponds to the number of turns at talk
+* `translated`: the proportion of turns for which there is a translation available in English/French/German (on a scale from 0 to 1)
+* `turnduration`: mean duration of turns in this corpus
+* `talkprop`: sum of all annotation durations divided by length of source. If >1, indicates a densely annotated recording with quite some overlap. If <7, indicates less densely annotated recording and possibly untranscribed parts.
+* `people`: total number of distinct participants encountered in all source records for this corpus
+* `hours`: total number of hours (counting from the first transcription until the last by source)
+* `turns_per_h`: number of turns per hour in this corpus
+
+Following this is a simple table of types of annotations encountered: at least `talk`, but possibly also `laugh` and `breath` (and sometimes `NA`). And finally there is a list of source files along with basic descriptive statistics per source.
+
+```{r generate_reports, include=T,echo=F,error=T}
+languages <- sort(unique(d$language))
+
+for (lang in languages) {
+  
+  summarytext <- paste0('Short name: ',lang,'; glottolog name: ',languagedata[languagedata$language==lang,]$name_gl,'; glottocode: ',languagedata[languagedata$language==lang,]$glottocode,'; family/type: ', languagedata[languagedata$language==lang,]$family,'; macroarea: ', languagedata[languagedata$language==lang,]$Macroarea)
+  
+  myurl <- languagedata[languagedata$language==lang,]$url
+  
+  cat("\n")
+  cat("##", d[d$language==lang,]$langfull[1],"\n") # Create second level headings with language name
+  cat("\n",summarytext)
+  cat("\n")
+  cat("\n")
+  cat(paste0("URL: ","[",myurl,"](",myurl,")","\n"))
+  cat("\n")
+
+  inspect_corpus(lang=lang)
+}
+
+```
+
+# Examples of reasons for exclusion
+
+While every single corpus considered here represents an immensely valuable record of communicative behaviour and linguistic resources used in interaction, differences in annotation standards make not all corpora as useful for all kinds of purposes. 
+
+For instance, a corpus might consist of a large amount of transcribed segments that can be useful for purposes relating to  automatic speech recognition; but it may be mostly monologic, which makes it harder to use for the analysis of interactional infrastructure. Or a corpus make provide sufficient data to be used for some corpus linguistic analyses of broad grammatical structures, but its annotations may only be roughly aligned with the actual speech signal, making it hard to use for speech recognition or conversation analytical purposes.
+
+In this section we discuss a number of examples of corpora along with possible reasons for excluding them from some kinds of analyses.
+
+## Duoxu
+Duoxu is a small corpus (a little over 300 annotations) that is mostly monologic. While each of the sessions contains at least 2 participants (qualifying for inclusion), the actual interactions show little dyadic interaction. That only ~70 out of ~350 annotations count as transitions between participants means that most conversations consist of turns produced in succession by  one participant without interactive contributions by the other. 
+
+This means that the Duoxu corpus may be useful for phonetic or morphosyntactic research, but that it doesn't provide sufficient stretches of casual conversation to inform analyses of interactional infrastructure. 
+
+```{r duoxu}
+inspect_corpus("duoxu")
+```
+
+
+
+## Hungarian
+Hungarian is an enormous and well-transcribed corpus, but stands out among other large corpora in having a very large amount of transitions timed at exactly 0. Over 27% of all speaker transitions are timed like this, which makes it an outlier relative to other corpora. 
+
+```{r exclusions3}
+
+d %>% 
+  filter(language %in% c("dutch","hungarian"),
+         participants == 2) %>%
+  drop_na(FTO) %>%
+  ggplot(aes(FTO)) +
+  theme_tufte() +
+  ggtitle("Comparing timing distributions in Dutch and Hungarian corpora") +
+  geom_vline(xintercept=0,colour="#cccccc") +
+  geom_density(trim=T) +
+  xlim(c(-2000,2000)) +
+  facet_wrap(~ language)
+
+```
+
+
+
+## Nahuatl
+The Nahuatl corpus originated as recordings of ethnobotanical elicitation sessions and is a formidable resource made available through OpenSLR. Both the mode of interaction and the way it has been segmented make it hard to use, without considerable additional work, for sequential or interactional analyses of joint action, timing, and turn-taking. 
+
+Many of the Nahuatl recordings are monologue (as in the two lower examples) or highly skewed dialogue with one speaker supplying ethnobotanical identifications and another speaker providing relatively minimal responses. When there is more interaction, as in the first two examples, its segmentation bears limited relation to the speech signal. Annotations are either fully overlapping or exactly non-overlapping. Partial overlaps are are.  
+
+```{r exclusions1, fig.width=12,fig.height=4}
+
+nahuatl_uids <- c("nahuatl-041-082-141587",
+                  "nahuatl-066-344-732468",
+                  "nahuatl-244-109-412319",
+                  "nahuatl-273-239-1014736")
+
+convplot(nahuatl_uids,content=T,window=15000,dyads=T)
+
+```
+
+
+## Akie and Mambila
+
+Akie and Mambila are further examples of corpora in which the timing of annotations does not conform to the actual speech signal. The main observation here is that all annotations are mutually exclusive: there is never any overlap. Considering the normal distribution of turn-taking and timing in interaction, this cannot represent the actual temporal distribution of turns in the interaction, and indeed inspection of the audio recordings for these corpora shows that it does not. This means, in effect, that what is transcribed in an annotation roughly conforms to a turn a talk, but that the details of the timing of this turn, such as its duration and its precisely placement in relation to other's turns, cannot be treated as accurate.
+
+While these corpora do lend themselves to several forms of linguistic analysis, their method of segmentation means that it would take considerable additional work to use this data in analyses of timing and turn-taking as well as for qualitative and quantitative analysis of talk-in-interaction. 
+
+```{r exclusions2, fig.width=12,fig.height=4}
+
+example_uids <- c("akie-1-084-198851",
+                  "akie-1-154-328594",
+                  "mambila-1-0156-288901",
+                  "mambila-1-0959-1813440")
+
+convplot(example_uids,content=T,window=15000,dyads=T)
+
+```
+
+
+# Overall overviews
+The following figures give an impression of hours, turns, annotation density and annotation length for the whole set of languages. Hours and turns are log scaled in this overview because the largest corpora dwarf many smaller ones.
+
+```{r overall_stats, echo=F, fig.height=12,fig.width=4}
+
+bysource <- d %>% group_by(language,source) %>%
+  drop_na(duration) %>%
+  summarize(start=min.na(begin),finish=max.na(end),
+            turns=n_distinct(uid),
+            words=sum(nwords,na.rm=T),
+            people=n_distinct(participant),
+            talktime = sum(duration),
+            totaltime = finish - start,
+            talkprop = talktime / totaltime,
+            minutes = (totaltime/1000 / 60), 
+            hours = (totaltime/1000) / 3600)
+
+bylanguage <- bysource %>%
+  summarize(turns = sum(turns),
+            words = sum(words),
+            turnduration=mean.na(sum(talktime)/turns),
+            talkprop = mean.na(talkprop),
+            hours = sum(hours),
+            minutes = sum(minutes),
+            turns_per_h = turns/hours) %>% 
+  arrange(desc(hours)) %>% 
+  mutate(language = as.factor(language))
+
+bylanguage %>%
+  ggplot(aes(minutes,reorder(language,minutes))) +
+  theme_tufte() + theme(axis.ticks.y = element_blank()) +
+  ggtitle("Total recording time (log scaled)") + theme(plot.title.position = "plot") +
+  labs(y = "") + 
+  scale_x_log10(breaks=c(60,600,6000,60000)) + 
+  geom_col() +
+  geom_vline(xintercept = 60,colour="#cccccc") +
+  geom_vline(xintercept = 600,colour="#cccccc")
+
+bylanguage %>%
+  ggplot(aes(turns,reorder(language,turns))) +
+  theme_tufte() + theme(axis.ticks.y = element_blank()) +
+  ggtitle("Number of turns (log scaled)") + theme(plot.title.position = "plot") +
+  labs(y = "",x="turns (log10)") +
+  scale_x_log10() + 
+  geom_col()
+
+bylanguage %>%
+  ggplot(aes(talkprop,reorder(language,talkprop))) +
+  theme_tufte() + theme(axis.ticks.y = element_blank()) +
+  ggtitle("Annotation density (amount of talk per unit of time)") + theme(plot.title.position = "plot") +
+  labs(y = "") +
+  geom_col() +
+  geom_vline(xintercept = mean.na(bylanguage$talkprop),colour="#cccccc")
+
+
+bylanguage %>%
+  ggplot(aes(turnduration,reorder(language,turnduration))) +
+  theme_tufte() + theme(axis.ticks.y = element_blank()) +
+  ggtitle("Mean turn duration") + theme(plot.title.position = "plot") +
+  labs(y = "") +
+  geom_col() +
+  geom_vline(xintercept = mean.na(bylanguage$turnduration),colour="#cccccc")
+
+
+bylanguage %>%
+  ggplot(aes(words/turns,reorder(language,words/turns))) +
+  theme_tufte() + theme(axis.ticks.y = element_blank()) +
+  ggtitle("Mean 'words' per turn (naïvely splitting at spaces)") + theme(plot.title.position = "plot") +
+  labs(y = "") +
+  geom_col() +
+  geom_vline(xintercept = mean.na(bylanguage$words/bylanguage$turns),colour="#cccccc")
+
+
+```

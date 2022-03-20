@@ -1,0 +1,946 @@
+---
+title: "From text to talk (ACL2022)"
+author: "Mark Dingemanse & Andreas Liesenfeld"
+date: "`r format(Sys.Date())`"
+output: 
+  github_document:
+    html_preview: false
+  html_document:
+    df_print: paged
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: false
+    theme: flatly
+    self_contained: true
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding,
+  output_format = "all") })
+editor_options: 
+  chunk_output_type: console
+---
+
+> **Abstract:** Informal social interaction is the primordial home of human language. Linguistically diverse conversational corpora are an important and largely untapped resource for computational linguistics and language technology. Through the efforts of a worldwide language documentation movement, such corpora are increasingly becoming available. We show how interactional data from 63 languages (26 families) harbours insights about turn-taking, timing, sequential structure and social action, with implications for language technology, natural language understanding, and the design of conversational interfaces. Harnessing linguistically diverse conversational corpora will provide the empirical foundations for flexible, localizable, humane language technologies of the future.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,warning=FALSE,results="show",message=FALSE)
+
+# Packages
+list.of.packages <- c("tidyverse","ggthemes","ggridges","ggrepel","ggtext","lubridate","stringr","stringi","stringdist","viridis","extrafont","mapproj","cowplot","knitr")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+lapply(list.of.packages, require, character.only=T)
+
+# Functions
+source("0_functions.R")
+
+# Load data
+#d <- read_csv("../elpaco_acl2022/data/d-acl2022.csv",lazy=T,show_col_types = F)
+d <- read_csv("../elpaco_acl2022/data/d-acl2022-sensitive.csv",show_col_types=F)
+
+d <- d %>% select(uid,begin,end,duration,FTO,participant,language,langshort,source,nature,nwords,n,rank,freq,overlap,priorby,turns_all)
+
+
+d.tokens <- read_csv("data/d-acl2022-tokens.csv",lazy=T,show_col_types=F)
+languagedata <- read_csv("data/languages.csv",lazy=F,show_col_types=F) 
+
+ncorpora <- n_distinct(d$corpus)
+nlanguages <- n_distinct(languagedata$language)
+nfamilies <- n_distinct(languagedata$family)
+
+```
+
+# Introduction
+This document produces the figures and analyses reported in the ACL2022 paper "From text to talk: Harnessing conversational corpora for humane and diversity-aware language technology".
+
+The paper is based on a curated collection of conversational corpora that are individually made available for research purposes. The full set of `r ncorpora` corpora for `r nlanguages` of `r nfamilies` is documented in a separate code notebook, along with reports on the most important features of each corpus.
+
+Not all of the languages or corpora are represented in all analyses and figures presented in the paper, because the corpora differ in size, precision of annotation, level of transcription. Accounts of inclusions and exclusions are provided in the [reports by language](./1_reports.md).
+
+**Note on data availability.** The corpora we rely on are made available for research purposes, but come under a variety of usage restrictions which in many cases (and for sensible reasons) prevent redistribution. We try to provide all relevant details about the corpora and how to access them in the following ways:
+
+1. All corpora are cited in the paper with at least the name of the compilers and a durable HANDLE or DOI locator.
+2. Links to all corpora and a considerable amount of additional data are also provided in the separate [reports by language](./1_reports.md).
+3. Our data curation workflow is detailed in [this preprint](https://doi.org/10.48550/arXiv.2203.03399).
+
+This also means that the report below is based on the full data but we cannot share all of this data in the repository. Instead, we can share only derived measures and samples. We have tried to make our analysis as perspicuous as possible by including the code used to generate the measures and samples in the [Rmd code](./2_analyses.Rmd).
+
+```{r data_prep}
+# Perform exclusions
+
+exclusions_all_analyses <- c("akie", # no FTos < 0, not time-aligned with actual speech
+                         "asimjeeg_datooga", # only single-tier transcriptions
+                         "besemah", # very imprecise time-alignment
+                         "khinalug", # >100 annotations set at exactly zero
+                         "mambila", # no FTOs <0, not time-aligned with actual speech
+                         "nahuatl", # unreliable & automatic segmentation
+                         "okiek", # few FTOs <0, not time-aligned with actual speech
+                         "southern_pinghua", # only single-tier transcriptions
+                         "tseltal", # extreme amount of annotations set at zero
+                         "zacatepec_chatino") # massively monologic
+
+d <- d %>% filter(language %notin% exclusions_all_analyses)
+d.tokens <- d.tokens %>% filter(language %notin% exclusions_all_analyses)
+languagedata <- languagedata %>% filter(language %notin% exclusions_all_analyses)
+
+# Totals after exclusions
+
+totals_by_source <- d %>% group_by(language,source) %>%
+  summarize(langshort=unique(langshort),
+            start=min.na(begin),
+            finish=max.na(end),
+            turns=n_distinct(uid),
+            participants=n_distinct(participant),
+            words=sum(nwords,na.rm=T),
+            totaltime = finish - start,
+            minutes = (totaltime/1000 / 60),
+            hours = (totaltime/1000) / 3600,
+            notiming = sum(is.na(duration)),
+            useless = ifelse(notiming==turns,1,0)) %>%
+  mutate(hours = ifelse(hours > 0,hours,0),
+         minutes = ifelse(minutes > 0,minutes,0))
+  
+totals_by_language <- totals_by_source %>%
+  ungroup() %>% group_by(language) %>%
+  summarize(langshort = unique(langshort),
+            turns = sum(turns),
+            words = sum(words),
+            minutes = sum(minutes),
+            hours = sum(hours),
+            participants=sum(participants))
+  
+totals <- totals_by_language %>%
+  ungroup() %>%
+  summarize(turns = sum(turns),
+            words = sum(words),
+            hours = round(sum(hours)),
+            participants=sum(participants))
+
+
+nfamilies <- n_distinct(languagedata$family)
+nlanguages <- n_distinct(languagedata$language)
+
+
+```
+
+# Data overview and map
+
+The subset of corpora considered here amounts to around 800 hours of speech, or 9.3 million words, segmented into 1.6 million annotations produced by over 11.000 participants.
+
+```{r descriptive_stats, results="show"}
+
+totals_by_language %>% select(language=langshort,turns,words,minutes,hours,people=participants)
+
+```
+
+
+We generate a map with numbers for labels (used in the paper).
+
+```{r ACL_map, fig.height=5.4,fig.width=12,align="center"}
+
+languagedata %>%
+  arrange(lon) %>%
+  ggplot(aes(lon,lat,colour=family)) +
+  theme_map() + theme(legend.position="none") +
+  borders("world",colour=NA,fill="#cccccc") +
+  coord_cartesian(ylim=c(-55,80),xlim=c(-150,170)) +
+  geom_point() +
+  geom_label_repel(aes(label=langshort),size=3,max.overlaps = Inf)
+# 
+# languagedata %>%
+#   arrange(lon) %>%
+#   mutate(label = row_number()) %>%
+#   ggplot(aes(lon,lat,colour=family)) +
+#   theme_map() + theme(legend.position="none",
+#                       plot.margin = unit(c(0,0,0,0),"pt")) +
+#   borders("world",colour=NA,fill="#cccccc") +
+#   coord_cartesian(ylim=c(-50,75),xlim=c(-125,165)) +
+#   geom_point() +
+#   geom_text_repel(aes(label=label),size=3.2,max.overlaps = Inf,
+#                   bg.color="white",
+#                   bg.r=0.2)
+#ggsave('figures/fig-map-numbers.png',bg="white",height=2.7,width=6)
+
+# generate caption for in the Overleaf document
+caption <- languagedata %>%
+  arrange(lon) %>% select(langshort) %>%
+  mutate(caption=paste0("\textsuperscript{",row_number(),"} ",langshort," ")) %>%
+  select(caption) %>% unlist() %>% paste0(collapse=" ") 
+
+```
+
+We also produce a graph of language resources by size.
+
+```{r language_resources, fig.height=3,fig.width=12,align="center"}
+
+
+color_A <- "#029E73"
+color_B <- "#0173B2"
+color_green <- "#349A57"
+
+
+totals_by_language$family <- languagedata[match(totals_by_language$language,languagedata$language),]$family
+
+languagedata$hours <- totals_by_language[match(languagedata$language,totals_by_language$language),]$hours
+
+languagedata %>%
+  ggplot(aes(y=hours,x=reorder(langshort,-hours))) +
+  theme_tufte() + 
+  theme(legend.position=c(0.8,0.8),
+        panel.grid.major.y=element_line(color="lightgrey",size=0.2),
+        panel.grid.minor.y=element_line(color="lightgrey",size=0.2),
+        axis.ticks.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(angle=45,hjust=1)) +
+  guides(fill=guide_legend(nrow=2)) +
+  labs(x = "",
+       y = "resource size (in hours)") + 
+  scale_y_continuous(breaks=c(0,2,4,6,8,10),labels=c(0,2,4,6,8,">10")) +
+  coord_cartesian(ylim=c(0,10)) +
+  geom_col(fill=color_A) 
+#ggsave('figures/fig-data-hours-clipped-at-10-green.png',bg="white",width=12,height=3)
+
+
+```
+
+# Turn-taking & timing
+
+We look at the timing of turn-taking in sufficiently large corpora, limiting the analysis to dyadic interactions because triadic and multi-party interaction is qualitatively different. We determine participation framework based on a 10 second rolling window: if in the window there are no more than 2 participants we count the interaction at that point as dyadic. 
+
+Five corpora are excluded from these analyses because they have unclear or incommensurable segmentation conventions: Brazilian Portuguese, Croatian, Czech, Hungarian, and Nganasan. A further number of corpora do not feature at least 1000 dyadic turn transitions. 
+
+```{r turn_taking}
+
+exclusions_turntaking <- c("brazilian_portuguese", # unclear segmentation conventions
+                         "croatian", # very many directly adjacent annotations
+                         "czech", # unclear segmentation conventions
+                         "hungarian", # >25% of annotation set at exactly zero
+                         "nganasan" # unreliable segmentation, >90% FTOs at exactly zero
+                         )
+
+# y axis works for now but would be nicer with n on a secondary axis on the right
+# see https://github.com/tidyverse/ggplot2/issues/3171#issuecomment-614084750
+
+# dyadic <- d %>%
+#   drop_na(FTO) %>%
+#   filter(participants < 3,
+#          language %notin% exclusions_turntaking) %>%
+#   group_by(language) %>%
+#   filter(n() > 1000) %>%
+#   filter(nature=="talk") %>%
+#   select(language=langshort,FTO,n,nature,overlap)
+# write_csv(dyadic,'data/dyadic.csv')
+dyadic <- read_csv('data/dyadic.csv',show_col_types = F,lazy=T)
+
+transitions <- dyadic %>%
+  group_by(language) %>%
+  summarise(n=n(),
+            medianFTO=median.na(FTO),
+            meanFTO=mean.na(FTO),
+            overlap=n-sum(is.na(overlap)),
+            overlap_prop=overlap/n)
+
+# mean(transitions$medianFTO)
+# mean(transitions$meanFTO)
+# sum(transitions$n)
+# sum(transitions$overlap)
+
+```
+
+There are `r n_distinct(transitions$language)` languages of `r n_distinct(languagedata[match(transitions$language,languagedata$language),]$family)` language families in which the corpora provide >1000 turn transitions in dyadic settings. The median floor transfer onset time (FTO) across the sample is `r median.na(transitions$medianFTO)` ms, very close to the no-gap no-overlap goal seen in prior work.
+
+```{r turntaking_plot, fig.height=7,fig.width=3.5,align="center"}
+
+dyadic %>%
+  mutate(language_n = paste0(language," (n=",n(),")"),
+         n_transitions = n()) %>%
+  ungroup() %>%
+  mutate(language = reorder(factor(language_n),FTO,median.na)) %>%
+  ggplot(aes(x=FTO,y=language,fill=stat(x))) +
+  theme_tufte() + 
+  theme(legend.position = "none") +
+  theme(axis.ticks.y = element_blank(),
+        axis.text.y.left = element_text(vjust=-1,hjust=0,margin=margin(0,-90,0,0,"pt"))) +
+  theme(plot.title.position = "plot") +
+  geom_density_ridges_gradient(na.rm=T,scale=2.2) +
+  labs(y="",x="ms") +
+  scale_fill_viridis_c(name="FTO",option="D" ,direction = -1) +
+  xlim(-2000,2000) +
+  geom_vline(xintercept = mean(transitions$meanFTO),colour="#cccccc",alpha=0.5) 
+#ggsave('figures/fig-ftoridgelines.png',bg="white",width = 3.5,height = 7)
+
+
+``` 
+
+# Unity and diversity
+
+As a language-agnostic approach to activity types, we consider a distinction between 'chats' and 'chunks'. We identify a number of these and plot them in six unrelated languages. Chunks are identified by looking for streaks of >2 identical turns by the same participant occurring in close succession while they make up less than 30% of talk in the surrounding 10 second window. 
+
+```{r chatchunk}
+
+color_A <- "#029E73"
+color_B <- "#0173B2"
+
+
+# find chunks
+# streak_uids <- dyadic %>%
+#   filter(streak >3, 
+#          talk_rel < 0.3,
+#          language %notin% c("dutch","german","arabic","korean","farsi","mandarin","english")) %>%
+#   select(uid) %>% as.vector()
+#convplot(sample(streak_uids$uid,10),highlight=T,window=40000)
+
+chunkyuids <- c("arabic-040-251-803170",
+                "farsi-039-166-670120",
+                "japanese-27-0310-457295",
+                "korean-021-313-628890",
+                "mandarin-021-109-265390",
+                "siwu-6-1519-3116790")
+flip <- chunkyuids[3]
+
+# see <- convplot(chunkyuids,datamode=T,window=40000)
+# write_csv(see,'data/convplot_chunks.csv')
+see <- read_csv('data/convplot_chunks.csv',show_col_types = F)
+panelA <- see %>% 
+  mutate(participant_int = ifelse(scope %in% flip, 
+                              ifelse(participant_int == 2,1,2), participant_int )) %>%
+  ggplot(aes(y=participant_int,fill=factor(participant_int))) +
+  theme_tufte() + 
+  theme(plot.title.position = "panel",
+        legend.position = "none",
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.x = element_blank(),
+        panel.spacing = unit(0.25, "lines"),
+        strip.text = element_text(margin=margin(0,0,0,0,"pt")),
+        strip.text.y.left = element_text(angle=0,hjust=0,family="serif")) + 
+  ylab("") + xlab("relative time (ms)") +
+  ggtitle("'Chunk' segments") +
+  scale_fill_manual(values=c(color_A,color_B)) +
+  scale_y_continuous(breaks=c(1:2),
+                     labels=c("B","A")) +
+  scale_x_continuous(breaks=c(0,10000,20000,30000,40000),
+                     labels=c(0,10,20,30,"40 seconds")) +
+  geom_rect(aes(xmin=begin0,xmax=end0,ymin=participant_int-0.6,ymax=participant_int+0.6),
+            size=0.5,colour="white") +
+  facet_wrap(~ langshort, strip.position="left",nrow=length(unique(see$langshort)))
+```
+
+Chats are identified by looking for turns with a duration of 3 seconds that occur in a regime where contributions in the 10 second window surrounding them are evenly distributed (both speakers contribution between 40% to 60% of talk).
+
+```{r chats, fig.height=3.5,fig.width=10,align="center"}
+# chat_uids <- dyadic %>%
+#   filter(talk_rel > 0.4,
+#          talk_rel < 0.6,
+#          duration > 3000,
+#          language %in% c("farsi")) %>%
+#   select(uid) %>% as.vector()
+# convplot(sample(chat_uids$uid,10),highlight=T,window=120000,dyads=T)
+
+chattyuids <- c("arabic-044-178-879710",
+                "farsi-085-223-794320",
+                "japanese-27-0512-834167",
+                "korean-061-498-896080",
+                "mandarin-073-210-517120",
+                "siwu-1-0593-1060090")
+# see <- convplot(chattyuids,datamode=T,window=40000)
+# write_csv(see,'data/convplot_chats.csv')
+see <- read_csv('data/convplot_chats.csv',show_col_types = F)
+
+
+panelB <- see %>% 
+  ggplot(aes(y=participant_int,fill=factor(participant_int))) +
+  theme_tufte() + 
+  theme(plot.title.position = "panel",
+        legend.position = "none",
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.x = element_blank(),
+        panel.spacing = unit(0.25, "lines"),
+        strip.text = element_text(margin=margin(0,0,0,0,"pt")),
+        strip.text.y.left = element_text(angle=0,hjust=0,family="serif")) + 
+  ylab("") + xlab("relative time (ms)") +
+  ggtitle("'Chat' segments") +
+  scale_fill_manual(values=c(color_A,color_B)) +
+  scale_y_continuous(breaks=c(1:2),
+                     labels=c("B","A")) +
+  scale_x_continuous(breaks=c(0,10000,20000,30000,40000),
+                     labels=c(0,10,20,30,"40 seconds")) +
+  geom_rect(aes(xmin=begin0,xmax=end0,ymin=participant_int-0.6,ymax=participant_int+0.6),
+            size=0.5,colour="white") +
+  facet_wrap(~ langshort, strip.position="left",nrow=length(unique(see$langshort)))
+#panelB
+panelAB <- plot_grid(panelA,panelB,labels=c("A","B"),rel_widths=c(1,1))
+#ggsave('figures/fig-chatvschunk-twopanels.png',bg="white",width=10,height=2.8)
+
+# find transitory places
+# streak_uids <- dyadic %>%
+#   filter(streak >3, 
+#          talk_rel < 0.3,
+#          language %in% c("arabic","mandarin")) %>%
+#   select(uid) %>% as.vector()
+# convplot(sample(streak_uids$uid,10),highlight=T,window=100000,dyads=T)
+
+transitory_uid <- "mandarin-110-185-495690"
+flip <- transitory_uid[1]
+# see <- convplot(transitory_uid,datamode=T,window=100000)
+# write_csv(see,'data/convplot_transition.csv')
+see <- read_csv('data/convplot_transition.csv',show_col_types = F)
+
+panelC <- see %>% 
+  mutate(participant_int = ifelse(scope %in% flip, 
+                              ifelse(participant_int == 2,1,2), participant_int )) %>%
+  ggplot(aes(y=participant_int,fill=factor(participant_int))) +
+  theme_tufte() + 
+  theme(plot.title.position = "panel",
+        legend.position = "none",
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.x = element_blank(),
+#        axis.text.x = element_text(hjust=0.5),
+        panel.spacing = unit(0.25, "lines"),
+        strip.text = element_text(margin=margin(0,0,0,0,"pt")),
+        strip.text.y.left = element_text(angle=0,hjust=0,family="serif")) + 
+  ylab("") + xlab("relative time (ms)") +
+  ggtitle("Transition from 'chunk' to 'chat'") +
+  scale_fill_manual(values=c(color_A,color_B)) +
+  scale_y_continuous(breaks=c(1:2),
+                     labels=c("B","A")) +
+  scale_x_continuous(breaks=c(0,20000,40000,60000,80000,100000),
+                     labels=c(0,20,40,60,80,"100 s")) +
+  geom_rect(aes(xmin=begin0,xmax=end0,ymin=participant_int-0.6,ymax=participant_int+0.6),
+            size=0.5,colour="white") +
+  facet_wrap(~ langshort, strip.position="left",nrow=length(unique(see$langshort)))
+plot_grid(panelAB,panelC,labels=c("","C"),nrow=2,rel_heights=c(6,2))
+#ggsave('figures/fig-chatvschunk-threepanels.png',bg="white",width=10,height=3.5)
+
+```
+
+We find that the most frequent turn formats used in English and Korean tellings are 'mhm' and 'eung' respectively. We plot 4 examples of 80 second stretches featuring continuers, and sample 100 such segments for each of the languages to compare the relative frequency of continuers.
+
+```{r continuers,include=F}
+# uids_eung <- unique(d[d$utterance_stripped == "eung" & d$language=="korean",]$uid)
+# data.table::fwrite(list(uids_eung),'data/uids_eung.txt')
+uids_eung <- as.vector(unlist(data.table::fread('data/uids_eung.txt')))
+
+# uids_mhm <- unique(d[d$utterance_stripped == "mhm" & d$language=="english",]$uid)
+# data.table::fwrite(list(uids_mhm),'data/uids_mhm.txt')
+uids_mhm <- as.vector(unlist(data.table::fread('data/uids_mhm.txt')))
+
+# korean vs english
+koreanvsenglish <- c("english-103-222-541210",
+                     "english-018-027-757130",
+                     "korean-033-221-436710",
+                     "korean-059-285-606020")
+flip <- koreanvsenglish[c(2,3)]
+
+# see <- convplot(koreanvsenglish,datamode=T,window=80000)
+# write_csv(see,'data/convplot_koreanvsenglish.csv')
+see <- read_csv('data/convplot_koreanvsenglish.csv',show_col_types = F)
+left_panel <- see %>% 
+  group_by(scope) %>%
+  mutate(participant_int = ifelse(scope %in% flip, 
+                              ifelse(participant_int == 2,1,2), participant_int ),
+         label=paste0(str_trunc(langshort,2,ellipsis = ""),"-",cur_group_id())) %>%
+  ggplot(aes(y=participant_int,fill=factor(participant_int))) +
+  theme_tufte() + 
+  theme(plot.title.position = "panel",
+        legend.position = "none",
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.x = element_blank(),
+        panel.spacing = unit(0.25, "lines"),
+        strip.text = element_text(margin=margin(0,0,0,0,"pt")),
+        strip.text.y.left = element_text(angle=0,hjust=0,family="serif")) + 
+  ylab("") + xlab("relative time (ms)") +
+  ggtitle("English 'mhm' and Korean 응 'eung' in tellings") +
+  scale_fill_manual(values=c(color_A,color_B)) +
+  scale_colour_manual(values=c(color_A,color_B)) +
+  scale_y_continuous(breaks=c(1:max(see$participant_int)),
+                     labels=rev(LETTERS[1:max(see$participant_int)])) +
+  scale_x_continuous(breaks=c(0,20000,40000,60000,80000),
+                     labels=c(0,20,40,60,"80 s")) +
+  geom_rect(data= . %>% filter(uid %notin% c(uids_eung,uids_mhm)),
+            aes(xmin=begin0,xmax=end0,ymin=participant_int-0.6,ymax=participant_int+0.6),
+            size=0.5,colour="white") +
+  geom_point(data= . %>% filter(uid %in% uids_eung | uid %in% uids_mhm),
+             aes(x=begin0+200,fill=factor(participant_int)),colour="white",size=4,shape=21,stroke=1) +
+  geom_point(data= . %>% filter(uid %in% uids_eung | uid %in% uids_mhm),
+             aes(x=begin0+200,fill=factor(participant_int)),fill="white",colour="white",size=1.2,shape=21,stroke=1) +
+  facet_wrap(~ label, nrow=4,strip.position = "left")
+#left_panel
+
+```
+
+We sample 100 stretches of 80000 ms (80 s) in each of the languages.
+
+```{r continuer_freq}
+# establish average number of items per 10s stretch for Korean and English
+
+# set.seed(314)
+# korean.eung <- convplot(sample(uids_eung,125),datamode=T,window=80000)
+# write_csv(korean.eung,'data/korean_eung.csv')
+korean.eung <- read_csv('data/korean_eung.csv',show_col_types = F)
+set.seed(314)
+scopes_sample <- sample(unique(korean.eung$scope),100)
+korean.eung <- korean.eung %>% filter(scope %in% scopes_sample)
+sources.korean <- n_distinct(korean.eung$source)
+
+# set.seed(42)
+# english.mhm <-  convplot(sample(uids_mhm,125),datamode=T,window=80000)
+# write_csv(english.mhm,'data/english_mhm.csv')
+english.mhm <- read_csv('data/english_mhm.csv',show_col_types = F)
+set.seed(42)
+scopes_sample <- sample(unique(english.mhm$scope),100)
+english.mhm <- english.mhm %>% filter(scope %in% scopes_sample)
+sources.english <- n_distinct(english.mhm$source)
+
+participants.korean <- korean.eung %>% group_by(source) %>%
+  summarize(participants=n_distinct(participant)) %>%
+  ungroup() %>% summarize(total_participants = sum(participants)) %>%
+  unlist() %>% as.character()
+
+participants.english <- english.mhm %>% group_by(source) %>%
+  summarize(participants=n_distinct(participants)) %>% 
+  ungroup() %>% summarize(total_participants = sum(participants)) %>%
+  unlist() %>% as.character()
+```
+
+The sample is randomized each time, but with the seed used in the paper, we end up with 100 samples from `r sources.korean` Korean source recordings with `r participants.korean` distinct participants, and another 100 samples from `r sources.english` English source recordings with `r participants.english` distinct participants.
+
+Here are the basic descriptive statistics for number of total turns, mean number of continuers, and overlap.
+
+```{r contfreq2}
+
+alluids <- c(uids_mhm,uids_eung)
+
+together <- rbind(english.mhm,korean.eung) %>%
+  group_by(scope,langshort) %>% 
+  summarise(n_turns=n_distinct(uid), # number of turns in this segment
+            n_cont=sum(uid %in% alluids), # ... continuers
+            n_rel=n_cont/n_turns,         # ... proportionally  
+            n_inv=n_turns/n_cont,         # inverse
+            cont_overlap=sum(uid %in% alluids & !is.na(overlap)),
+            prop_overlap=cont_overlap/n_cont)
+together[together == "Inf"] <- 0
+
+# also get at overlap
+together %>% 
+  group_by(langshort) %>% 
+  summarize(n_turns=mean.na(n_turns),
+            mean_cont=mean.na(n_cont),
+            n_cont_sd=sd(n_cont),
+            mean_rel=mean.na(n_rel),
+            n_rel_sd=sd.na(n_rel),
+            mean_inv=mean.na(n_inv),
+            n_inv_sd=sd.na(n_inv),
+            mean_overlap=mean.na(prop_overlap)) 
+
+```
+
+Note that average duration and number of turns per 10 second window is not very different across the two languages, so won't really explain this:
+
+```{r contfreq3} 
+
+d %>% filter(language %in% c("english","korean")) %>%
+  group_by(language) %>%
+  summarise(meanduration = mean.na(duration),
+            turnsper10sec = mean.na(turns_all),
+            wordsperturn = mean.na(nwords))
+
+```
+
+Putting it all together, we get at the following figure:
+
+```{r contfreq_fig, fig.height=2,fig.width=10,align="center"}
+
+# get density plots per stretch
+
+library(ggdist)
+
+right_panel <- together %>%
+  ggplot(aes(langshort,n_rel)) +
+  theme_tufte() + 
+  theme(legend.position = "none",
+        axis.ticks = element_blank()) +
+  ggtitle('% of continuer turns') +
+  scale_colour_discrete() +
+  scale_y_continuous(labels=scales::percent_format(scale=100,accuracy = 1L)) +
+  ylab("") + xlab("in 100 samples of 80 sec") +
+  stat_halfeye()
+ 
+#right_panel
+plot_grid(left_panel,right_panel,labels=c("A","B"),rel_widths=c(3,1))
+#ggsave('figures/fig-koreanvsenglish-twopanels-boxplot.png',bg="white",width=10,height=2)
+
+
+```
+
+# Interactional tools
+
+```{r interactionaltools}
+
+nonuniqueness <- d %>% 
+  filter(nature=="talk",
+         !is.na(n)) %>%
+  group_by(language) %>%
+  mutate(unique = ifelse(n==1,"unique",
+                         ifelse(n < 20,"lessthan20","morethan20"))) %>%
+  group_by(unique) %>%
+  summarise(n=n())
+
+allturns <- sum(nonuniqueness$n)
+nonunique <- sum(nonuniqueness[nonuniqueness$unique!="unique",]$n)
+morethan20 <- nonuniqueness[nonuniqueness$unique=="morethan20",]$n
+```
+
+The number of truly unique turns across the whole dataset is `r allturns - nonunique`. However, the total number of turns is `r allturns`, so at least a quarter across all languages (`r nonunique` out of `r allturns`) occurs more than once. Of these, one fifth (`r morethan20`) occur more than 20 times. 
+
+```{r zipf1}
+
+# inclusions
+# for looking at turns, it doesn't make sense to look at some of the smaller corpora 
+
+zipf_languages <- d %>% group_by(language) %>% 
+  summarise(maxrank=max.na(rank)) %>% filter(maxrank > 8) %>%
+  select(language) %>% unlist() %>% as.character()
+
+zipf_languages_biggest <- d %>% group_by(language) %>% 
+  summarise(maxrank=max.na(rank)) %>% filter(maxrank > 19) %>%
+  select(language) %>% unlist() %>% as.character()
+
+zipf_languages_smaller <- d %>% group_by(language) %>% 
+  summarise(maxrank=max.na(rank)) %>% filter(maxrank > 8) %>%
+  filter(language %notin% zipf_languages_biggest) %>%
+  select(language) %>% unlist() %>% as.character()
+
+# n_distinct(languagedata[languagedata$language %in% zipf_languages,]$family)
+# n_distinct(languagedata[languagedata$language %in% zipf_languages_biggest,]$family)
+# n_distinct(languagedata[languagedata$language %in% zipf_languages_smaller,]$family)
+
+```
+
+For analysing the relation between frequency and rank at the level of turn formats we use only corpora in which there are at least 20 recurring turn formats. There are `r n_distinct(zipf_languages_biggest)` such languages (representing `r n_distinct(languagedata[languagedata$language %in% zipf_languages_biggest,]$family)` families). We also look at a further set of 17 smaller corpora (representing `r n_distinct(zipf_languages_smaller)` languages of `r n_distinct(languagedata[languagedata$language %in% zipf_languages_smaller,]$family)` families) in which there at least 9 recurring turn formats.
+
+```{r zipf2, fig.height=4,fig.width=10,align="center"}
+
+colour_turns <- "#CC78BC"
+colour_tokens <- "#0173B2" 
+
+# for fitting turns, look at non-unique items only and fit to turn formats that occur at least 20 times
+d.turns.fitted <- d %>%
+  filter(language %in% zipf_languages) %>%
+  arrange(language,source,begin) %>%
+  group_by(language) %>%
+  filter(n > 20) %>%
+  summarise(intercept = lm(log10(freq) ~ log10(rank))$coefficients[1],
+            slope = lm(log10(freq) ~ log10(rank))$coefficients[2],
+            langshort=langshort)
+
+# for fitting tokens, look at rank >5 to capture main regime of multi-part distribution
+d.tokens.fitted <- d.tokens %>%
+  filter(language %in% zipf_languages) %>%
+  group_by(language) %>%
+  filter(n > 1,
+         rank > 5) %>%
+  summarise(intercept = lm(log10(freq) ~ log10(rank))$coefficients[1],
+            slope = lm(log10(freq) ~ log10(rank))$coefficients[2],
+            langshort=langshort)
+
+# d.tokens.fitted %>%
+#   slice(1) %>%
+#   filter(language %in% zipf_languages_biggest) %>%
+#   ungroup() %>%
+#   summarise(mean.na(slope))
+# d.turns.fitted %>%
+#   slice(1) %>%
+#   filter(language %in% zipf_languages_biggest) %>%
+#   ungroup() %>%
+#   summarise(mean.na(slope))
+
+# let's plot!
+# using element_markdown() from ggtext() for coloured words in title
+d %>%
+  filter(language %in% zipf_languages_biggest,
+         n > 1) %>%
+  group_by(language,rank) %>% 
+  slice(1) %>% # pick only one row per utterance
+  mutate(id = sample(1:n())) %>% filter(id <= 1000) %>% # sample large corpora
+  mutate(words = ifelse(nwords==1,"one","more")) %>% # add 'words' classification
+  ungroup() %>%
+  arrange(language) %>%
+  ggplot(aes(rank,freq)) +
+  theme_tufte() + 
+  theme(legend.position=c(0.9,0.1),
+        legend.title = element_blank(),
+        plot.title=element_markdown(),
+        plot.title.position = "plot",
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        panel.spacing=unit(4,"pt"),
+        strip.text = element_text(hjust=0,size=10,margin=margin(b=4,l=0))) +
+  ggtitle("<span style='color:#CC78BC'>Turn-level</span> and <span style='color:#0173B2'>word-level</span> relation between frequency and rank") +
+  scale_x_log10() + xlab(expression(paste(log[10]," rank"))) +
+  scale_y_log10() + ylab(expression(paste(log[10]," frequency"))) +
+  scale_shape_manual(values=c(21,3),
+                     guide="legend",
+                     breaks=c("one","more"),
+                     labels=c("one word","multi-word")) +
+  geom_abline(data=d.turns.fitted %>% filter(language %in% zipf_languages_biggest),
+              aes(intercept=intercept,slope=slope),
+              linetype="solid",alpha=0.3,size=0.3,colour=colour_turns) +
+  geom_abline(data=d.tokens.fitted %>% filter(language %in% zipf_languages_biggest),
+              aes(intercept=intercept,slope=slope),
+              linetype="solid",alpha=0.3,size=0.3,colour=colour_tokens) +
+  geom_point(data= . %>% filter(n > 19), # fill circles of n > 19
+             aes(shape=words),na.rm=T,size=0.6,
+             colour=colour_turns,fill=colour_turns,alpha=0.6) +
+  geom_point(data= . %>% filter(n < 20), # grey out things with n < 19
+             aes(shape=words),na.rm=T,size=0.8,
+             colour="grey",fill=NA,alpha=0.6) +
+  geom_point(data= . %>% filter(n > 19,words=="more"), # emphasize multi-word ones
+             aes(shape=words),na.rm=T,size=1.2,
+             colour=colour_turns,alpha=1) +
+  geom_point(data=d.tokens %>% 
+               filter(n > 1,language %in% zipf_languages_biggest) %>% group_by(language) %>%   mutate(id = sample(1:n())) %>% filter(id <= 1000), # sample large corpora
+             aes(rank,freq),
+             na.rm=T,alpha=0.3,size=0.8,
+             fill=colour_tokens,
+             colour=colour_tokens) +
+  facet_wrap(~ langshort,nrow=3,scales="free")
+#ggsave('figures/fig-rankfreq.png',bg="white",width=10,height=4)
+
+
+```
+
+## Recurrent turn formats 
+What is the proportion of multiword versus one word recurrent turn formats?
+
+```{r top_turns, results="show"}
+
+topturns <- read_csv('data/d-acl2022-topturns.csv',show_col_types = F) %>%
+  filter(language %in% zipf_languages_biggest) %>%
+  arrange(language,desc(n))
+
+# mean and max number of words
+# topturns %>%
+#   group_by(language) %>%
+#   summarise(meanwords = mean(nwords),
+#             maxwords = max(nwords))
+
+# topturns %>%
+#   group_by(language,words) %>%
+#   summarise(n = n()) %>%
+#   print(n=56)
+
+
+# what's the proportion of multiword turns?
+# topturns %>%
+#   group_by(language) %>%
+#   mutate(formats = n_distinct(utterance_stripped)) %>%
+#   group_by(language,words) %>%
+#   summarise(n = n(),
+#             prop = n/formats) %>%
+#   slice(1)
+# 
+topturns %>%
+  group_by(language) %>%
+  mutate(formats = n_distinct(utterance_stripped)) %>%
+  group_by(language,words) %>%
+  summarise(n = n(),
+            prop = n/formats) %>%
+  slice(1) %>%
+  group_by(language,words) %>%
+  summarise(n = sum(n),prop=mean(prop)) %>%
+  group_by(words) %>%
+  summarise(n = sum(n),prop=round(n/597,1))
+
+top5 <- topturns %>%
+  group_by(language,words) %>%
+  slice(1:5)
+
+```
+
+
+# Appendices
+
+## Validation of turn-taking measures
+
+Stivers et al. 2009 work with polar questions only. We can try to approach that by looking at all FTOs of turn types that are reasonably frequent (= likely to be conventionalized responses to polar questions) that follow turns that end in a question mark. 
+
+```{r FTO_validation_1, fig.height=5,fig.width=8,align="center"}
+
+mainlist <- dyadic %>% select(language) %>% unique() %>% unlist() %>% as.character()
+
+# candidate qa sequences 
+
+# dyadic <- d %>%
+#   drop_na(FTO) %>%
+#   filter(participants < 3,
+#          language %notin% exclusions_turntaking) %>%
+#   group_by(language) %>%
+#   filter(n() > 1000) %>%
+#   filter(nature=="talk") %>%
+#   select(uid,FTO,language=langshort,n,nwords,nature,overlap,source,priorby,utterance)
+
+# d.qa <- dyadic %>%
+#   filter(language %in% mainlist) %>%
+#   group_by(source) %>%
+#   drop_na(FTO) %>% filter(nature=="talk") %>%
+#   filter(priorby == "other") %>%
+#   mutate(utterance_prior = lag(utterance),
+#          prior_nwords = lag(nwords)) %>%
+#   filter(str_detect(lag(utterance),"\\?$")) %>% # prior ends in "?"
+#   filter(str_detect(utterance,"\\?$",negate=TRUE)) %>% # current doesn't
+# #  filter(lag(freq_perc) > 70) %>%
+#   ungroup() %>% group_by(language)
+
+# d.qa <- d.qa %>%
+#   filter(n() > 250) # these plots make little sense for low numbers of cases
+
+# d.qa %>% 
+#   select(uid,FTO,language) %>%
+#   write_csv('data/qa_FTOdata.csv')
+
+
+```
+
+We limit ourselves to languages in which 250 such sequences are found. Here are, for each of these 10 languages, one example of a candidate QA sequence so identified:
+
+```{r qa_examples, cols.print=3,rows.print=20}
+# qa_examples <- d.qa %>% 
+#   arrange(desc(n)) %>%
+#   filter(prior_nwords > 2) %>%
+#   slice(1:2) %>%
+#   select(language,Q=utterance_prior,A=utterance)
+# write_csv(qa_examples,'data/qa_examples.csv')
+qa_examples <- read_csv('data/qa_examples.csv',show_col_types = F) %>%
+  group_by(language) %>% slice(1)
+
+#print examples
+kableExtra::kable(qa_examples)
+
+
+```
+
+
+
+Then we print the number of candidate QA sequences by language and plot the distribution of FTOs (floor transfer onset times).
+
+```{r qa_plot, results="show"}
+
+d.qa <- read_csv('data/qa_FTOdata.csv',show_col_types = F) %>%
+  filter(language %in% mainlist) %>%
+  group_by(language)
+
+# print the number of QA sequences by language
+d.qa %>% summarise(n=n())
+
+# prepare plot
+
+nturns <- sum(!is.na(d.qa$FTO))
+
+d.qa %>%
+  #mutate(language = reorder(factor(language),FTO,median.na)) %>%
+  ggplot(aes(FTO)) +
+  theme_tufte() +
+  ggtitle('Floor transfer onset in candidate Y/N sequences',
+          subtitle="Only for languages with >250 candidate Y/N sequences (grey: all transitions)") +
+  theme(plot.title.position = "panel",
+        legend.position = c(1,0)) +
+  geom_density(data=dyadic %>% filter(nature=="talk",language %in% unique(d.qa$language)),aes(FTO),
+               na.rm=T,size=1,color="#cccccc") +
+  geom_density(na.rm=T,size=1,alpha=0.8) +
+  theme(axis.ticks.y = element_blank(),axis.text.y = element_blank()) +
+  labs(x = "FTO (ms)",y="") +
+  xlim(-2000,2000) +
+  geom_vline(xintercept = 0,colour="#cccccc") +
+  facet_wrap(~ language,strip.position ="bottom",nrow=3)
+#ggsave('figures/sup-fto-for-QA-seqs.png',bg="white",height=5,width=8,scale=1.4)
+
+```
+
+## Power law plots for smaller corpora
+
+While the body of the paper provides a plot for 22 large corpora, here we als plot the rank-frequency distributions for turns and words for 21 smaller corpora in which there are at least 9 recurrent turn formats.
+
+```{r zipf_sup, fig.height=4,fig.width=10,align="center"}
+
+# let's plot!
+# using element_markdown() from ggtext() for coloured words in title
+d %>%
+  filter(language %in% zipf_languages_smaller,
+         n > 1) %>%
+  group_by(language,rank) %>% 
+  slice(1) %>% # pick only one row per utterance
+  mutate(id = sample(1:n())) %>% filter(id <= 1000) %>% # sample large corpora
+  mutate(words = ifelse(nwords==1,"one","more")) %>% # add 'words' classification
+  ungroup() %>%
+  arrange(language) %>%
+  ggplot(aes(rank,freq)) +
+  theme_tufte() + 
+  theme(legend.position=c(0.9,0.1),
+        legend.title = element_blank(),
+        plot.title=element_markdown(),
+        plot.title.position = "plot",
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        panel.spacing=unit(4,"pt"),
+        strip.text = element_text(hjust=0,size=10,margin=margin(b=4,l=0))) +
+  ggtitle("<span style='color:#CC78BC'>Turn-level</span> and <span style='color:#0173B2'>word-level</span> relation between frequency and rank") +
+  scale_x_log10() + xlab(expression(paste(log[10]," rank"))) +
+  scale_y_log10() + ylab(expression(paste(log[10]," frequency"))) +
+  scale_shape_manual(values=c(21,3),
+                     guide="legend",
+                     breaks=c("one","more"),
+                     labels=c("one word","multi-word")) +
+  geom_abline(data=d.turns.fitted %>% filter(language %in% zipf_languages_smaller),
+              aes(intercept=intercept,slope=slope),
+              linetype="solid",alpha=0.3,size=0.3,colour=colour_turns) +
+  geom_abline(data=d.tokens.fitted %>% filter(language %in% zipf_languages_smaller),
+              aes(intercept=intercept,slope=slope),
+              linetype="solid",alpha=0.3,size=0.3,colour=colour_tokens) +
+  geom_point(data= . %>% filter(n > 19), # fill circles of n > 19
+             aes(shape=words),na.rm=T,size=0.6,
+             colour=colour_turns,fill=colour_turns,alpha=0.6) +
+  geom_point(data= . %>% filter(n < 20), # grey out things with n < 19
+             aes(shape=words),na.rm=T,size=0.8,
+             colour="grey",fill=NA,alpha=0.6) +
+  geom_point(data= . %>% filter(n > 19,words=="more"), # emphasize multi-word ones
+             aes(shape=words),na.rm=T,size=1.2,
+             colour=colour_turns,alpha=1) +
+  geom_point(data=d.tokens %>% 
+               filter(n > 1,language %in% zipf_languages_smaller) %>% group_by(language) %>%   mutate(id = sample(1:n())) %>% filter(id <= 1000), # sample large corpora
+             aes(rank,freq),
+             na.rm=T,alpha=0.3,size=0.8,
+             fill=colour_tokens,
+             colour=colour_tokens) +
+  facet_wrap(~ langshort,nrow=3,scales="free")
+#ggsave('figures/sup-rankfreq-smaller.png',bg="white",width=10,height=4)
+
+```
+
+## Table of language data
+This table shows language name, family, glottocode and citation key. The paper contains full bibliographic metadata. 
+
+```{r table, results="show", rows.print=80, cols.print=4}
+
+languagedata %>%
+  select(Language=langshort,Family=family,glottocode,Citation=citekey)
+
+library(xtable)
+langtable <- languagedata %>%
+  mutate(name_and_code = paste0(langshort," (",glottocode,")"),
+         Citation = paste0("\\cite{",citekey,"}")) %>%
+  arrange(name_and_code) %>%
+  select("Language (glottocode)"=name_and_code,Family=family,Citation) %>%
+  xtable()
+# uncomment to generate latex table
+# print(langtable,
+#       tabular.environment="longtable",
+#       include.rownames = F,
+#       sanitize.text.function = function(x){x},
+#       align=c("p"))
+
+
+```
