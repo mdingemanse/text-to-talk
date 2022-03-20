@@ -27,7 +27,7 @@ h2  {
 ```
 
 ```{r setup, include=FALSE,echo=FALSE}
-knitr::opts_chunk$set(fig.width=10,fig.height=3,
+knitr::opts_chunk$set(fig.width=10,fig.height=3, fig.path='figures_rmd/',
                       echo = TRUE,warning=FALSE,message=FALSE,results="asis")
 
 # Packages and useful functions
@@ -37,7 +37,8 @@ if(length(new.packages)) install.packages(new.packages)
 lapply(list.of.packages, require, character.only=T)
 
 # Load functions
-source("../elpaco-lingdiv/elpaco-lingdiv-0-functions.R")
+#source("../elpaco-lingdiv/elpaco-lingdiv-0-functions.R")
+source("0_functions.R")
 
 # Load data
 d <- read_csv("../elpaco_acl2022/data/d-acl2022-sensitive.csv",show_col_types=F)
